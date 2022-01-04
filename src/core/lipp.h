@@ -103,14 +103,17 @@ public:
         destory_pending();
     }
 
-    void insert(const V& v) {
-        insert(v.first, v.second);
+    bool insert(const V& v) {
+        return insert(v.first, v.second);
     }
-    void insert(const T& key, const P& value) {
-        root = insert_tree(root, key, value);
+    bool insert(const T& key, const P& value) {
+        bool ok = true;
+        root = insert_tree(root, key, value, &ok);
+        return ok;
     }
     P at(const T& key, bool skip_existence_check = true) const {
         Node* node = root;
+        exist = true;
 
         while (true) {
             int pos = PREDICT_POS(node, key);
@@ -121,7 +124,8 @@ public:
                     return node->items[pos].comp.data.value;
                 } else {
                     if (BITMAP_GET(node->none_bitmap, pos) == 1) {
-                        RT_ASSERT(false);
+                        exist = false;
+                        return static_cast<P>(0);
                     } else if (BITMAP_GET(node->child_bitmap, pos) == 0) {
                         RT_ASSERT(node->items[pos].comp.data.key == key);
                         return node->items[pos].comp.data.value;
@@ -176,6 +180,11 @@ public:
         root = build_tree_bulk(keys, values, num_keys);
         delete[] keys;
         delete[] values;
+    }
+
+    // Find the minimum `len` keys which are no less than `lower`, returns the number of found keys.
+    int range_query_len(std::pair<T,P>* results, const T& lower, int len) {
+        return range_core_len<false>(results, 0, root, lower, len);
     }
 
     void show() const {
@@ -273,6 +282,26 @@ public:
             for (int i = 0; i < node->num_items; i ++) {
                 if (BITMAP_GET(node->child_bitmap, i) == 1) {
                     size += sizeof(Item);
+                    has_child = true;
+                    s.push(node->items[i].comp.child);
+                }
+            }
+            if (has_child) size += sizeof(*node);
+        }
+        return size;
+    }
+    size_t total_size() const {
+        std::stack < Node * > s;
+        s.push(root);
+
+        size_t size = 0;
+        while (!s.empty()) {
+            Node *node = s.top();
+            s.pop();
+            bool has_child = false;
+            for (int i = 0; i < node->num_items; i++) {
+                size += sizeof(Item);
+                if (BITMAP_GET(node->child_bitmap, i) == 1) {
                     has_child = true;
                     s.push(node->items[i].comp.child);
                 }
@@ -784,7 +813,7 @@ private:
         }
     }
 
-    Node* insert_tree(Node* _node, const T& key, const P& value)
+    Node* insert_tree(Node* _node, const T& key, const P& value, bool* ok = nullptr)
     {
         constexpr int MAX_DEPTH = 128;
         Node* path[MAX_DEPTH];
@@ -859,8 +888,86 @@ private:
                 break;
             }
         }
-
+        if(ok) {
+            *ok = true;
+        }
         return path[0];
+    }
+
+    // SATISFY_LOWER = true means all the keys in the subtree of `node` are no less than to `lower`.
+    template<bool SATISFY_LOWER>
+    int range_core_len(std::pair <T, P> *results, int pos, Node *node, const T &lower, int len) {
+        if constexpr(SATISFY_LOWER)
+        {
+            int bit_pos = 0;
+            const bitmap_t *none_bitmap = node->none_bitmap;
+            while (bit_pos < node->num_items) {
+                bitmap_t not_none = ~(*none_bitmap);
+                while (not_none) {
+                    int latest_pos = BITMAP_NEXT_1(not_none);
+                    not_none ^= 1 << latest_pos;
+
+                    int i = bit_pos + latest_pos;
+                    if (BITMAP_GET(node->child_bitmap, i) == 0) {
+                        results[pos] = {node->items[i].comp.data.key, node->items[i].comp.data.value};
+                        // __builtin_prefetch((void*)&(node->items[i].comp.data.key) + 64);
+                        pos++;
+                    } else {
+                        pos = range_core_len<true>(results, pos, node->items[i].comp.child, lower, len);
+                    }
+                    if (pos >= len) {
+                        return pos;
+                    }
+                }
+
+                bit_pos += BITMAP_WIDTH;
+                none_bitmap++;
+            }
+            return pos;
+        } else {
+            int lower_pos = PREDICT_POS(node, lower);
+            if (BITMAP_GET(node->none_bitmap, lower_pos) == 0) {
+                if (BITMAP_GET(node->child_bitmap, lower_pos) == 0) {
+                    if (node->items[lower_pos].comp.data.key >= lower) {
+                        results[pos] = {node->items[lower_pos].comp.data.key, node->items[lower_pos].comp.data.value};
+                        pos++;
+                    }
+                } else {
+                    pos = range_core_len<false>(results, pos, node->items[lower_pos].comp.child, lower, len);
+                }
+                if (pos >= len) {
+                    return pos;
+                }
+            }
+            if (lower_pos + 1 >= node->num_items) {
+                return pos;
+            }
+            int bit_pos = (lower_pos + 1) / BITMAP_WIDTH * BITMAP_WIDTH;
+            const bitmap_t *none_bitmap = node->none_bitmap + bit_pos / BITMAP_WIDTH;
+            while (bit_pos < node->num_items) {
+                bitmap_t not_none = ~(*none_bitmap);
+                while (not_none) {
+                    int latest_pos = BITMAP_NEXT_1(not_none);
+                    not_none ^= 1 << latest_pos;
+
+                    int i = bit_pos + latest_pos;
+                    if (i <= lower_pos) continue;
+                    if (BITMAP_GET(node->child_bitmap, i) == 0) {
+                        results[pos] = {node->items[i].comp.data.key, node->items[i].comp.data.value};
+                        // __builtin_prefetch((void*)&(node->items[i].comp.data.key) + 64);
+                        pos++;
+                    } else {
+                        pos = range_core_len<true>(results, pos, node->items[i].comp.child, lower, len);
+                    }
+                    if (pos >= len) {
+                        return pos;
+                    }
+                }
+                bit_pos += BITMAP_WIDTH;
+                none_bitmap++;
+            }
+            return pos;
+        }
     }
 };
 
