@@ -111,7 +111,7 @@ public:
         root = insert_tree(root, key, value, &ok);
         return ok;
     }
-    P at(const T& key, bool skip_existence_check = true, bool& exist) const {
+    P at(const T& key, bool skip_existence_check, bool& exist) const {
         Node* node = root;
         exist = true;
 
