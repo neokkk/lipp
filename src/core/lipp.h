@@ -278,15 +278,13 @@ public:
         size_t size = 0;
         while (!s.empty()) {
             Node* node = s.top(); s.pop();
-            bool has_child = false;
+            size += sizeof(*node);
             for (int i = 0; i < node->num_items; i ++) {
                 if (BITMAP_GET(node->child_bitmap, i) == 1) {
                     size += sizeof(Item);
-                    has_child = true;
                     s.push(node->items[i].comp.child);
                 }
             }
-            if (has_child) size += sizeof(*node);
         }
         return size;
     }
@@ -298,15 +296,13 @@ public:
         while (!s.empty()) {
             Node *node = s.top();
             s.pop();
-            bool has_child = false;
+            size += sizeof(*node);
             for (int i = 0; i < node->num_items; i++) {
                 size += sizeof(Item);
                 if (BITMAP_GET(node->child_bitmap, i) == 1) {
-                    has_child = true;
                     s.push(node->items[i].comp.child);
                 }
             }
-            if (has_child) size += sizeof(*node);
         }
         return size;
     }
