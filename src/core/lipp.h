@@ -279,10 +279,16 @@ public:
         while (!s.empty()) {
             Node* node = s.top(); s.pop();
             size += sizeof(*node);
+            size += sizeof(*(node->none_bitmap));
+            size += sizeof(*(node->child_bitmap));
             for (int i = 0; i < node->num_items; i ++) {
                 if (BITMAP_GET(node->child_bitmap, i) == 1) {
-                    size += sizeof(Item);
                     s.push(node->items[i].comp.child);
+                    size += sizeof(Item);
+                } else {
+                    if (BITMAP_GET(node->none_bitmap, i) == 1) {
+                        size += sizeof(Item);
+                    } 
                 }
             }
         }
@@ -297,6 +303,8 @@ public:
             Node *node = s.top();
             s.pop();
             size += sizeof(*node);
+            size += sizeof(*(node->none_bitmap));
+            size += sizeof(*(node->child_bitmap));
             for (int i = 0; i < node->num_items; i++) {
                 size += sizeof(Item);
                 if (BITMAP_GET(node->child_bitmap, i) == 1) {
