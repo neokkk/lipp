@@ -853,7 +853,7 @@ private:
             Node* node = path[i];
             const int num_inserts = node->num_inserts;
             const int num_insert_to_data = node->num_insert_to_data;
-            const bool need_rebuild = node->fixed == 0 && node->size >= node->build_size * 4 && node->size >= 64 && num_insert_to_data * 10 >= num_inserts;
+            const bool need_rebuild = node->fixed == 0 && node->size >= node->build_size * 2 && node->size >= 64 && num_insert_to_data * 10 >= num_inserts;
 
             if (need_rebuild) {
                 const int ESIZE = node->size;
