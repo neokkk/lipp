@@ -182,6 +182,30 @@ public:
         delete[] values;
     }
 
+    bool remove(const T &key) {
+    constexpr int MAX_DEPTH = 128;
+    Node *path[MAX_DEPTH];
+    int path_size = 0;
+
+    for (Node* node = root; ; ) {
+        RT_ASSERT(path_size < MAX_DEPTH);
+        path[path_size ++] = node;
+
+        node->size--;
+        node->num_inserts--;
+        node->num_insert_to_data--;
+        int pos = PREDICT_POS(node, key);
+        if (BITMAP_GET(node->none_bitmap, pos) == 1) {
+            return false;
+        } else if (BITMAP_GET(node->child_bitmap, pos) == 0) {
+            BITMAP_SET(node->none_bitmap, pos);
+            return true;
+        } else {
+            node = node->items[pos].comp.child;
+        }
+    }
+  }
+
     // Find the minimum `len` keys which are no less than `lower`, returns the number of found keys.
     int range_query_len(std::pair<T,P>* results, const T& lower, int len) {
         return range_core_len<false>(results, 0, root, lower, len);
