@@ -183,9 +183,15 @@ public:
     }
 
     bool remove(const T &key) {
+        constexpr int MAX_DEPTH = 128;
+        Node *path[MAX_DEPTH];
+        int path_size = 0;
         Node *parent = nullptr;
+
         for (Node* node = root; ; ) {
-            node->size--;
+            RT_ASSERT(path_size < MAX_DEPTH);
+            path[path_size++] = node;
+            // node->size--;
             int pos = PREDICT_POS(node, key);
             if (BITMAP_GET(node->child_bitmap, pos) == 1) {
                 parent = node;
@@ -194,7 +200,10 @@ public:
                 return false;
             } else if (BITMAP_GET(node->child_bitmap, pos) == 0) {
                 BITMAP_SET(node->none_bitmap, pos);
-                if(node->size == 0 && parent != nullptr) {
+                for(int i = 0; i < path_size; i++) {
+                    path[i]->size--;
+                }
+                if(node->size == 0) {
                     int parent_pos = PREDICT_POS(parent, key);
                     BITMAP_CLEAR(parent->child_bitmap, parent_pos);
                     BITMAP_SET(parent->none_bitmap, parent_pos);
