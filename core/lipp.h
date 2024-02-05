@@ -439,7 +439,7 @@ private:
         unsigned int null;
         unsigned int data;
         unsigned int node;
-        unsigned int depth;
+        unsigned int height;
     };
 
     Node *root;
@@ -506,8 +506,8 @@ private:
             }
         }
 
-        stat.depth = max_subtree_depth + 1;
-        ofs << stat.total << "," << stat.null << "," << stat.data << "," << stat.node << "," << stat.depth << std::endl;
+        stat.height = max_subtree_depth + 1;
+        ofs << stat.total << "," << stat.null << "," << stat.data << "," << stat.node << "," << stat.height << std::endl;
     }
 
     void print_distribution() {
