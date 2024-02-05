@@ -5,6 +5,7 @@
 #include <stdint.h>
 #include <math.h>
 #include <limits>
+#include <iostream>
 #include <cstdio>
 #include <stack>
 #include <vector>
@@ -12,6 +13,7 @@
 #include <sstream>
 
 typedef uint8_t bitmap_t;
+
 #define BITMAP_WIDTH (sizeof(bitmap_t) * 8)
 #define BITMAP_SIZE(num_items) (((num_items) + BITMAP_WIDTH - 1) / BITMAP_WIDTH)
 #define BITMAP_GET(bitmap, pos) (((bitmap)[(pos) / BITMAP_WIDTH] >> ((pos) % BITMAP_WIDTH)) & 1)
@@ -37,6 +39,8 @@ typedef uint8_t bitmap_t;
 template<class T, class P, bool USE_FMCD = true>
 class LIPP
 {
+    struct Node;
+
     static_assert(std::is_arithmetic<T>::value, "LIPP key type must be numeric.");
 
     inline int compute_gap_count(int size) {
@@ -45,8 +49,7 @@ class LIPP
         return 5;
     }
 
-    struct Node;
-    inline int PREDICT_POS(Node* node, T key) const {
+    inline int PREDICT_POS(Node *node, T key) const {
         double v = node->model.predict_double(key);
         if (v > std::numeric_limits<int>::max() / 2) {
             return node->num_items - 1;
@@ -57,7 +60,7 @@ class LIPP
         return std::min(node->num_items - 1, static_cast<int>(v));
     }
 
-    static void remove_last_bit(bitmap_t& bitmap_item) {
+    static void remove_last_bit(bitmap_t &bitmap_item) {
         bitmap_item -= 1 << BITMAP_NEXT_1(bitmap_item);
     }
 
@@ -67,10 +70,10 @@ class LIPP
     struct {
         long long fmcd_success_times = 0;
         long long fmcd_broken_times = 0;
-        #if COLLECT_TIME
+    #if COLLECT_TIME
         double time_scan_and_destory_tree = 0;
         double time_build_tree_bulk = 0;
-        #endif
+    #endif
     } stats;
 
 public:
@@ -79,44 +82,48 @@ public:
     LIPP(double BUILD_LR_REMAIN = 0, bool QUIET = true)
         : BUILD_LR_REMAIN(BUILD_LR_REMAIN), QUIET(QUIET) {
         {
-            std::vector<Node*> nodes;
-            for (int _ = 0; _ < 1e7; _ ++) {
-                Node* node = build_tree_two(T(0), P(), T(1), P());
+            std::vector<Node *> nodes;
+            for (int _ = 0; _ < 1e7; _++) {
+                Node *node = build_tree_two(T(0), P(), T(1), P());
                 nodes.push_back(node);
             }
             for (auto node : nodes) {
                 destroy_tree(node);
             }
             if (!QUIET) {
-                printf("initial memory pool size = %lu\n", pending_two.size());
+                printf("Initial memory pool size = %lu\n", pending_two.size());
             }
         }
         if (USE_FMCD && !QUIET) {
-            printf("enable FMCD\n");
+            printf("Enable FMCD\n");
         }
 
         root = build_tree_none();
     }
+
     ~LIPP() {
         destroy_tree(root);
         root = NULL;
         destory_pending();
     }
 
-    bool insert(const V& v) {
+    bool insert(const V &v) {
         return insert(v.first, v.second);
     }
-    bool insert(const T& key, const P& value) {
+
+    bool insert(const T &key, const P &value) {
         bool ok = true;
         root = insert_tree(root, key, value, &ok);
         return ok;
     }
-    P at(const T& key, bool skip_existence_check, bool& exist) const {
-        Node* node = root;
+
+    P at(const T &key, bool skip_existence_check, bool &exist) const {
+        Node *node = root;
         exist = true;
 
         while (true) {
             int pos = PREDICT_POS(node, key);
+
             if (BITMAP_GET(node->child_bitmap, pos) == 1) {
                 node = node->items[pos].comp.child;
             } else {
@@ -134,8 +141,10 @@ public:
             }
         }
     }
-    bool exists(const T& key) const {
-        Node* node = root;
+
+    bool exists(const T &key) const {
+        Node *node = root;
+
         while (true) {
             int pos = PREDICT_POS(node, key);
             if (BITMAP_GET(node->none_bitmap, pos) == 1) {
@@ -147,7 +156,8 @@ public:
             }
         }
     }
-    void bulk_load(const V* vs, int num_keys) {
+
+    void bulk_load(const V *vs, int num_keys) {
         if (num_keys == 0) {
             destroy_tree(root);
             root = build_tree_none();
@@ -166,33 +176,39 @@ public:
         }
 
         RT_ASSERT(num_keys > 2);
-        for (int i = 1; i < num_keys; i ++) {
+        for (int i = 1; i < num_keys; i++) {
             RT_ASSERT(vs[i].first > vs[i-1].first);
         }
 
-        T* keys = new T[num_keys];
-        P* values = new P[num_keys];
-        for (int i = 0; i < num_keys; i ++) {
+        T *keys = new T[num_keys];
+        P *values = new P[num_keys];
+
+        for (int i = 0; i < num_keys; i++) {
             keys[i] = vs[i].first;
             values[i] = vs[i].second;
         }
+
         destroy_tree(root);
         root = build_tree_bulk(keys, values, num_keys);
+
+        this->print_distribution();
+
         delete[] keys;
         delete[] values;
     }
 
     bool remove(const T &key) {
         constexpr int MAX_DEPTH = 128;
-        Node *path[MAX_DEPTH];
         int path_size = 0;
+        Node *path[MAX_DEPTH];
         Node *parent = nullptr;
 
-        for (Node* node = root; ; ) {
+        for (Node *node = root; ;) {
             RT_ASSERT(path_size < MAX_DEPTH);
             path[path_size++] = node;
             // node->size--;
             int pos = PREDICT_POS(node, key);
+
             if (BITMAP_GET(node->child_bitmap, pos) == 1) {
                 parent = node;
                 node = node->items[pos].comp.child;
@@ -200,10 +216,10 @@ public:
                 return false;
             } else if (BITMAP_GET(node->child_bitmap, pos) == 0) {
                 BITMAP_SET(node->none_bitmap, pos);
-                for(int i = 0; i < path_size; i++) {
+                for (int i = 0; i < path_size; i++) {
                     path[i]->size--;
                 }
-                if(node->size == 0) {
+                if (node->size == 0) {
                     int parent_pos = PREDICT_POS(parent, key);
                     BITMAP_CLEAR(parent->child_bitmap, parent_pos);
                     BITMAP_SET(parent->none_bitmap, parent_pos);
@@ -218,8 +234,8 @@ public:
         }
     }
 
-    bool update(const T &key, const P& value) {
-        for (Node* node = root; ; ) {
+    bool update(const T &key, const P &value) {
+        for (Node *node = root; ;) {
             int pos = PREDICT_POS(node, key);
             if (BITMAP_GET(node->none_bitmap, pos) == 1) {
                 return false;
@@ -233,22 +249,26 @@ public:
     }
 
     // Find the minimum `len` keys which are no less than `lower`, returns the number of found keys.
-    int range_query_len(std::pair<T,P>* results, const T& lower, int len) {
+    int range_query_len(std::pair<T, P> *results, const T &lower, int len) {
         return range_core_len<false>(results, 0, root, lower, len);
     }
 
     void show() const {
+        std::stack<Node *> s;
+        s.push(root);
+
         printf("============= SHOW LIPP ================\n");
 
-        std::stack<Node*> s;
-        s.push(root);
         while (!s.empty()) {
-            Node* node = s.top(); s.pop();
+            Node *node = s.top();
+            s.pop();
 
             printf("Node(%p, a = %lf, b = %lf, num_items = %d)", node, node->model.a, node->model.b, node->num_items);
             printf("[");
+
             int first = 1;
-            for (int i = 0; i < node->num_items; i ++) {
+
+            for (int i = 0; i < node->num_items; i++) {
                 if (!first) {
                     printf(", ");
                 }
@@ -267,71 +287,87 @@ public:
             printf("]\n");
         }
     }
+    
     void print_depth() const {
-        std::stack<Node*> s;
+        int max_depth = 1, sum_depth = 0, sum_nodes = 0;
+        std::stack<Node *> s;
         std::stack<int> d;
+
         s.push(root);
         d.push(1);
 
-        int max_depth = 1;
-        int sum_depth = 0, sum_nodes = 0;
+
         while (!s.empty()) {
-            Node* node = s.top(); s.pop();
-            int depth = d.top(); d.pop();
-            for (int i = 0; i < node->num_items; i ++) {
+            Node *node = s.top();
+            int depth = d.top();
+
+            s.pop();
+            d.pop();
+
+            for (int i = 0; i < node->num_items; i++) {
                 if (BITMAP_GET(node->child_bitmap, i) == 1) {
                     s.push(node->items[i].comp.child);
                     d.push(depth + 1);
                 } else if (BITMAP_GET(node->none_bitmap, i) != 1) {
                     max_depth = std::max(max_depth, depth);
                     sum_depth += depth;
-                    sum_nodes ++;
+                    sum_nodes++;
                 }
             }
         }
 
         printf("max_depth = %d, avg_depth = %.2lf\n", max_depth, double(sum_depth) / double(sum_nodes));
     }
+    
     void verify() const {
-        std::stack<Node*> s;
+        std::stack<Node *> s;
         s.push(root);
 
         while (!s.empty()) {
-            Node* node = s.top(); s.pop();
+            Node *node = s.top();
             int sum_size = 0;
-            for (int i = 0; i < node->num_items; i ++) {
+
+            s.pop();
+
+            for (int i = 0; i < node->num_items; i++) {
                 if (BITMAP_GET(node->child_bitmap, i) == 1) {
                     s.push(node->items[i].comp.child);
                     sum_size += node->items[i].comp.child->size;
                 } else if (BITMAP_GET(node->none_bitmap, i) != 1) {
-                    sum_size ++;
+                    sum_size++;
                 }
             }
             RT_ASSERT(sum_size == node->size);
         }
     }
+    
     void print_stats() const {
         printf("======== Stats ===========\n");
         if (USE_FMCD) {
             printf("\t fmcd_success_times = %lld\n", stats.fmcd_success_times);
             printf("\t fmcd_broken_times = %lld\n", stats.fmcd_broken_times);
         }
-        #if COLLECT_TIME
+    #if COLLECT_TIME
         printf("\t time_scan_and_destory_tree = %lf\n", stats.time_scan_and_destory_tree);
         printf("\t time_build_tree_bulk = %lf\n", stats.time_build_tree_bulk);
-        #endif
+    #endif
     }
+    
     size_t index_size() const {
-        std::stack<Node*> s;
+        size_t size = 0;
+        std::stack<Node *> s;
+
         s.push(root);
 
-        size_t size = 0;
         while (!s.empty()) {
-            Node* node = s.top(); s.pop();
+            Node *node = s.top();
+            s.pop();
+
             size += sizeof(*node);
             size += sizeof(*(node->none_bitmap));
             size += sizeof(*(node->child_bitmap));
-            for (int i = 0; i < node->num_items; i ++) {
+
+            for (int i = 0; i < node->num_items; i++) {
                 if (BITMAP_GET(node->child_bitmap, i) == 1) {
                     s.push(node->items[i].comp.child);
                     size += sizeof(Item);
@@ -344,17 +380,21 @@ public:
         }
         return size;
     }
+    
     size_t total_size() const {
-        std::stack < Node * > s;
+        size_t size = 0;
+        std::stack<Node *> s;
+
         s.push(root);
 
-        size_t size = 0;
         while (!s.empty()) {
             Node *node = s.top();
             s.pop();
+
             size += sizeof(*node);
             size += sizeof(*(node->none_bitmap));
             size += sizeof(*(node->child_bitmap));
+
             for (int i = 0; i < node->num_items; i++) {
                 size += sizeof(Item);
                 if (BITMAP_GET(node->child_bitmap, i) == 1) {
@@ -367,6 +407,7 @@ public:
 
 private:
     struct Node;
+
     struct Item
     {
         union {
@@ -374,9 +415,10 @@ private:
                 T key;
                 P value;
             } data;
-            Node* child;
+            Node *child;
         } comp;
     };
+
     struct Node
     {
         int is_two; // is special node for only two keys
@@ -386,54 +428,111 @@ private:
         int num_inserts, num_insert_to_data;
         int num_items; // size of items
         LinearModel<T> model;
-        Item* items;
-        bitmap_t* none_bitmap; // 1 means None, 0 means Data or Child
-        bitmap_t* child_bitmap; // 1 means Child. will always be 0 when none_bitmap is 1
+        Item *items;
+        bitmap_t *none_bitmap; // 1 means None, 0 means Data or Child
+        bitmap_t *child_bitmap; // 1 means Child. will always be 0 when none_bitmap is 1
     };
 
-    Node* root;
-    std::stack<Node*> pending_two;
-
-    std::allocator<Node> node_allocator;
-    Node* new_nodes(int n)
+    struct Stat
     {
-        Node* p = node_allocator.allocate(n);
-        RT_ASSERT(p != NULL && p != (Node*)(-1));
+        unsigned int total;
+        unsigned int null;
+        unsigned int data;
+        unsigned int node;
+        unsigned int depth;
+    };
+
+    Node *root;
+    std::stack<Node *> pending_two;
+    std::allocator<Node> node_allocator;
+    std::allocator<Item> item_allocator;
+    std::allocator<bitmap_t> bitmap_allocator;
+
+    Node *new_nodes(int n)
+    {
+        Node *p = node_allocator.allocate(n);
+        RT_ASSERT(p != NULL && p != (Node *)(-1));
         return p;
     }
-    void delete_nodes(Node* p, int n)
+
+    void delete_nodes(Node *p, int n)
     {
         node_allocator.deallocate(p, n);
     }
 
-    std::allocator<Item> item_allocator;
-    Item* new_items(int n)
+    Item *new_items(int n)
     {
-        Item* p = item_allocator.allocate(n);
+        Item *p = item_allocator.allocate(n);
         RT_ASSERT(p != NULL && p != (Item*)(-1));
         return p;
     }
-    void delete_items(Item* p, int n)
+
+    void delete_items(Item *p, int n)
     {
         item_allocator.deallocate(p, n);
     }
 
-    std::allocator<bitmap_t> bitmap_allocator;
-    bitmap_t* new_bitmap(int n)
+    bitmap_t *new_bitmap(int n)
     {
-        bitmap_t* p = bitmap_allocator.allocate(n);
-        RT_ASSERT(p != NULL && p != (bitmap_t*)(-1));
+        bitmap_t *p = bitmap_allocator.allocate(n);
+        RT_ASSERT(p != NULL && p != (bitmap_t *)(-1));
         return p;
     }
-    void delete_bitmap(bitmap_t* p, int n)
+
+    void delete_bitmap(bitmap_t *p, int n)
     {
         bitmap_allocator.deallocate(p, n);
     }
 
+    void print_distribution_recursive(Node *node, std::ofstream &ofs, int &max_subtree_depth) {
+        int subtree_depth = 0;
+        
+        if (node == nullptr) {
+            return;
+        }
+
+        Stat stat{node->num_items, 0, 0, 0, 0};
+
+        for (int i = 0; i < node->num_items; i++) {
+            if (BITMAP_GET(node->none_bitmap, i) == 1) {
+                stat.null++;
+                continue;
+            } else if (BITMAP_GET(node->child_bitmap, i) == 0) {
+                stat.data++;
+            } else {
+                stat.node++;
+                print_distribution_recursive(node->items[i].comp.child, ofs, subtree_depth);
+                max_subtree_depth = std::max(max_subtree_depth, subtree_depth + 1);
+            }
+        }
+
+        stat.depth = max_subtree_depth + 1;
+        ofs << stat.total << "," << stat.null << "," << stat.data << "," << stat.node << "," << stat.depth << std::endl;
+    }
+
+    void print_distribution() {
+        auto now = std::chrono::high_resolution_clock::now();
+        std::stringstream filename;
+        filename << "distribution_" << now.time_since_epoch().count() % 1000000 << ".csv";
+
+        std::string output_file = filename.str();
+        std::cout << "output_file = " << output_file << std::endl;
+
+        std::ofstream ofs(output_file);
+        ofs << "total,null,data,node,height\n";
+
+        int max_subtree_depth = 0;
+
+        print_distribution_recursive(this->root, ofs, max_subtree_depth);
+
+        std::cout << std::endl;
+        ofs.close();
+    }
+
     /// build an empty tree
-    Node* build_tree_none()
+    Node *build_tree_none()
     {
-        Node* node = new_nodes(1);
+        Node *node = new_nodes(1);
         node->is_two = 0;
         node->build_size = 0;
         node->size = 0;
@@ -447,20 +546,21 @@ private:
         BITMAP_SET(node->none_bitmap, 0);
         node->child_bitmap = new_bitmap(1);
         node->child_bitmap[0] = 0;
-
         return node;
     }
+
     /// build a tree with two keys
-    Node* build_tree_two(T key1, P value1, T key2, P value2)
+    Node *build_tree_two(T key1, P value1, T key2, P value2)
     {
         if (key1 > key2) {
             std::swap(key1, key2);
             std::swap(value1, value2);
         }
+
         RT_ASSERT(key1 < key2);
         static_assert(BITMAP_WIDTH == 8);
 
-        Node* node = NULL;
+        Node *node = NULL;
         if (pending_two.empty()) {
             node = new_nodes(1);
             node->is_two = 1;
@@ -468,7 +568,6 @@ private:
             node->size = 2;
             node->fixed = 0;
             node->num_inserts = node->num_insert_to_data = 0;
-
             node->num_items = 8;
             node->items = new_items(node->num_items);
             node->none_bitmap = new_bitmap(1);
@@ -476,7 +575,8 @@ private:
             node->none_bitmap[0] = 0xff;
             node->child_bitmap[0] = 0;
         } else {
-            node = pending_two.top(); pending_two.pop();
+            node = pending_two.top();
+            pending_two.pop();
         }
 
         const long double mid1_key = key1;
@@ -487,17 +587,18 @@ private:
 
         node->model.a = (mid2_target - mid1_target) / (mid2_key - mid1_key);
         node->model.b = mid1_target - node->model.a * mid1_key;
+
         RT_ASSERT(isfinite(node->model.a));
         RT_ASSERT(isfinite(node->model.b));
 
-        { // insert key1&value1
+        { // insert key1 & value1
             int pos = PREDICT_POS(node, key1);
             RT_ASSERT(BITMAP_GET(node->none_bitmap, pos) == 1);
             BITMAP_CLEAR(node->none_bitmap, pos);
             node->items[pos].comp.data.key = key1;
             node->items[pos].comp.data.value = value1;
         }
-        { // insert key2&value2
+        { // insert key2 & value2
             int pos = PREDICT_POS(node, key2);
             RT_ASSERT(BITMAP_GET(node->none_bitmap, pos) == 1);
             BITMAP_CLEAR(node->none_bitmap, pos);
@@ -507,8 +608,9 @@ private:
 
         return node;
     }
+
     /// bulk build, _keys must be sorted in asc order.
-    Node* build_tree_bulk(T* _keys, P* _values, int _size)
+    Node *build_tree_bulk(T *_keys, P *_values, int _size)
     {
         if (USE_FMCD) {
             return build_tree_bulk_fmcd(_keys, _values, _size);
@@ -516,9 +618,10 @@ private:
             return build_tree_bulk_fast(_keys, _values, _size);
         }
     }
+
     /// bulk build, _keys must be sorted in asc order.
     /// split keys into three parts at each node.
-    Node* build_tree_bulk_fast(T* _keys, P* _values, int _size)
+    Node *build_tree_bulk_fast(T *_keys, P *_values, int _size)
     {
         RT_ASSERT(_size > 1);
 
@@ -526,28 +629,29 @@ private:
             int begin;
             int end;
             int level; // top level = 1
-            Node* node;
+            Node *node;
         } Segment;
         std::stack<Segment> s;
 
-        Node* ret = new_nodes(1);
+        Node *ret = new_nodes(1);
         s.push((Segment){0, _size, 1, ret});
 
         while (!s.empty()) {
             const int begin = s.top().begin;
             const int end = s.top().end;
             const int level = s.top().level;
-            Node* node = s.top().node;
+            Node *node = s.top().node;
+
             s.pop();
 
             RT_ASSERT(end - begin >= 2);
             if (end - begin == 2) {
-                Node* _ = build_tree_two(_keys[begin], _values[begin], _keys[begin+1], _values[begin+1]);
+                Node *_ = build_tree_two(_keys[begin], _values[begin], _keys[begin+1], _values[begin+1]);
                 memcpy(node, _, sizeof(Node));
                 delete_nodes(_, 1);
             } else {
-                T* keys = _keys + begin;
-                P* values = _values + begin;
+                T *keys = _keys + begin;
+                P *values = _values + begin;
                 const int size = end - begin;
                 const int BUILD_GAP_CNT = compute_gap_count(size);
 
@@ -575,6 +679,7 @@ private:
 
                 node->model.a = (mid2_target - mid1_target) / (mid2_key - mid1_key);
                 node->model.b = mid1_target - node->model.a * mid1_key;
+
                 RT_ASSERT(isfinite(node->model.a));
                 RT_ASSERT(isfinite(node->model.b));
 
@@ -593,12 +698,12 @@ private:
                 memset(node->none_bitmap, 0xff, sizeof(bitmap_t) * bitmap_size);
                 memset(node->child_bitmap, 0, sizeof(bitmap_t) * bitmap_size);
 
-                for (int item_i = PREDICT_POS(node, keys[0]), offset = 0; offset < size; ) {
+                for (int item_i = PREDICT_POS(node, keys[0]), offset = 0; offset < size;) {
                     int next = offset + 1, next_i = -1;
                     while (next < size) {
                         next_i = PREDICT_POS(node, keys[next]);
                         if (next_i == item_i) {
-                            next ++;
+                            next++;
                         } else {
                             break;
                         }
@@ -626,9 +731,10 @@ private:
 
         return ret;
     }
+    
     /// bulk build, _keys must be sorted in asc order.
     /// FMCD method.
-    Node* build_tree_bulk_fmcd(T* _keys, P* _values, int _size)
+    Node *build_tree_bulk_fmcd(T *_keys, P *_values, int _size)
     {
         RT_ASSERT(_size > 1);
 
@@ -636,28 +742,29 @@ private:
             int begin;
             int end;
             int level; // top level = 1
-            Node* node;
+            Node *node;
         } Segment;
         std::stack<Segment> s;
 
-        Node* ret = new_nodes(1);
+        Node *ret = new_nodes(1);
         s.push((Segment){0, _size, 1, ret});
 
         while (!s.empty()) {
             const int begin = s.top().begin;
             const int end = s.top().end;
             const int level = s.top().level;
-            Node* node = s.top().node;
+            Node *node = s.top().node;
+
             s.pop();
 
             RT_ASSERT(end - begin >= 2);
             if (end - begin == 2) {
-                Node* _ = build_tree_two(_keys[begin], _values[begin], _keys[begin+1], _values[begin+1]);
+                Node *_ = build_tree_two(_keys[begin], _values[begin], _keys[begin + 1], _values[begin + 1]);
                 memcpy(node, _, sizeof(Node));
                 delete_nodes(_, 1);
             } else {
-                T* keys = _keys + begin;
-                P* values = _values + begin;
+                T *keys = _keys + begin;
+                P *values = _values + begin;
                 const int size = end - begin;
                 const int BUILD_GAP_CNT = compute_gap_count(size);
 
@@ -669,7 +776,7 @@ private:
 
                 // FMCD method
                 // Here the implementation is a little different with Algorithm 1 in our paper.
-                // In Algorithm 1, U_T should be (keys[size-1-D] - keys[D]) / (L - 2).
+                // In Algorithm 1, U_T should be (keys[size - 1 - D] - keys[D]) / (L - 2).
                 // But according to the derivation described in our paper, M.A should be less than 1 / U_T.
                 // So we added a small number (1e-6) to U_T.
                 // In fact, it has only a negligible impact of the performance.
@@ -677,33 +784,43 @@ private:
                     const int L = size * static_cast<int>(BUILD_GAP_CNT + 1);
                     int i = 0;
                     int D = 1;
-                    RT_ASSERT(D <= size-1-D);
+
+                    RT_ASSERT(D <= size - 1 - D);
+
                     double Ut = (static_cast<long double>(keys[size - 1 - D]) - static_cast<long double>(keys[D])) /
                                 (static_cast<double>(L - 2)) + 1e-6;
+
                     while (i < size - 1 - D) {
                         while (i + D < size && keys[i + D] - keys[i] >= Ut) {
-                            i ++;
+                            i++;
                         }
                         if (i + D >= size) {
                             break;
                         }
                         D = D + 1;
-                        if (D * 3 > size) break;
-                        RT_ASSERT(D <= size-1-D);
+                        if (D * 3 > size) {
+                            break;
+                        }
+
+                        RT_ASSERT(D <= size - 1 - D);
+
                         Ut = (static_cast<long double>(keys[size - 1 - D]) - static_cast<long double>(keys[D])) /
                              (static_cast<double>(L - 2)) + 1e-6;
                     }
+                    
                     if (D * 3 <= size) {
-                        stats.fmcd_success_times ++;
+                        stats.fmcd_success_times++;
 
                         node->model.a = 1.0 / Ut;
                         node->model.b = (L - node->model.a * (static_cast<long double>(keys[size - 1 - D]) +
                                                               static_cast<long double>(keys[D]))) / 2;
+
                         RT_ASSERT(isfinite(node->model.a));
                         RT_ASSERT(isfinite(node->model.b));
+
                         node->num_items = L;
                     } else {
-                        stats.fmcd_broken_times ++;
+                        stats.fmcd_broken_times++;
 
                         int mid1_pos = (size - 1) / 3;
                         int mid2_pos = (size - 1) * 2 / 3;
@@ -723,11 +840,14 @@ private:
 
                         node->model.a = (mid2_target - mid1_target) / (mid2_key - mid1_key);
                         node->model.b = mid1_target - node->model.a * mid1_key;
+
                         RT_ASSERT(isfinite(node->model.a));
                         RT_ASSERT(isfinite(node->model.b));
                     }
                 }
+
                 RT_ASSERT(node->model.a >= 0);
+
                 const int lr_remains = static_cast<int>(size * BUILD_LR_REMAIN);
                 node->model.b += lr_remains;
                 node->num_items += lr_remains * 2;
@@ -740,15 +860,16 @@ private:
                 const int bitmap_size = BITMAP_SIZE(node->num_items);
                 node->none_bitmap = new_bitmap(bitmap_size);
                 node->child_bitmap = new_bitmap(bitmap_size);
+
                 memset(node->none_bitmap, 0xff, sizeof(bitmap_t) * bitmap_size);
                 memset(node->child_bitmap, 0, sizeof(bitmap_t) * bitmap_size);
 
-                for (int item_i = PREDICT_POS(node, keys[0]), offset = 0; offset < size; ) {
+                for (int item_i = PREDICT_POS(node, keys[0]), offset = 0; offset < size;) {
                     int next = offset + 1, next_i = -1;
                     while (next < size) {
                         next_i = PREDICT_POS(node, keys[next]);
                         if (next_i == item_i) {
-                            next ++;
+                            next++;
                         } else {
                             break;
                         }
@@ -780,7 +901,8 @@ private:
     void destory_pending()
     {
         while (!pending_two.empty()) {
-            Node* node = pending_two.top(); pending_two.pop();
+            Node *node = pending_two.top();
+            pending_two.pop();
 
             delete_items(node->items, node->num_items);
             const int bitmap_size = BITMAP_SIZE(node->num_items);
@@ -790,14 +912,16 @@ private:
         }
     }
 
-    void destroy_tree(Node* root)
+    void destroy_tree(Node *root)
     {
-        std::stack<Node*> s;
+        std::stack<Node *> s;
         s.push(root);
-        while (!s.empty()) {
-            Node* node = s.top(); s.pop();
 
-            for (int i = 0; i < node->num_items; i ++) {
+        while (!s.empty()) {
+            Node *node = s.top();
+            s.pop();
+
+            for (int i = 0; i < node->num_items; i++) {
                 if (BITMAP_GET(node->child_bitmap, i) == 1) {
                     s.push(node->items[i].comp.child);
                 }
@@ -806,6 +930,7 @@ private:
             if (node->is_two) {
                 RT_ASSERT(node->build_size == 2);
                 RT_ASSERT(node->num_items == 8);
+
                 node->size = 2;
                 node->num_inserts = node->num_insert_to_data = 0;
                 node->none_bitmap[0] = 0xff;
@@ -821,24 +946,24 @@ private:
         }
     }
 
-    void scan_and_destory_tree(Node* _root, T* keys, P* values, bool destory = true)
+    void scan_and_destory_tree(Node *_root, T *keys, P *values, bool destory = true)
     {
-        typedef std::pair<int, Node*> Segment; // <begin, Node*>
+        typedef std::pair<int, Node *> Segment; // <begin, Node *>
         std::stack<Segment> s;
 
         s.push(Segment(0, _root));
         while (!s.empty()) {
             int begin = s.top().first;
-            Node* node = s.top().second;
+            Node *node = s.top().second;
             const int SHOULD_END_POS = begin + node->size;
             s.pop();
 
-            for (int i = 0; i < node->num_items; i ++) {
+            for (int i = 0; i < node->num_items; i++) {
                 if (BITMAP_GET(node->none_bitmap, i) == 0) {
                     if (BITMAP_GET(node->child_bitmap, i) == 0) {
                         keys[begin] = node->items[i].comp.data.key;
                         values[begin] = node->items[i].comp.data.value;
-                        begin ++;
+                        begin++;
                     } else {
                         s.push(Segment(begin, node->items[i].comp.child));
                         begin += node->items[i].comp.child->size;
@@ -851,6 +976,7 @@ private:
                 if (node->is_two) {
                     RT_ASSERT(node->build_size == 2);
                     RT_ASSERT(node->num_items == 8);
+
                     node->size = 2;
                     node->num_inserts = node->num_insert_to_data = 0;
                     node->none_bitmap[0] = 0xff;
@@ -867,48 +993,51 @@ private:
         }
     }
 
-    Node* insert_tree(Node* _node, const T& key, const P& value, bool* ok = nullptr)
+    Node *insert_tree(Node *_node, const T &key, const P &value, bool *ok = nullptr)
     {
         constexpr int MAX_DEPTH = 128;
-        Node* path[MAX_DEPTH];
+        Node *path[MAX_DEPTH];
         int path_size = 0;
         int insert_to_data = 0;
 
-        for (Node* node = _node; ; ) {
+        for (Node *node = _node; ;) {
             RT_ASSERT(path_size < MAX_DEPTH);
-            path[path_size ++] = node;
 
-            node->size ++;
-            node->num_inserts ++;
+            path[path_size++] = node;
+            node->size++;
+            node->num_inserts++;
+
             int pos = PREDICT_POS(node, key);
-            if (BITMAP_GET(node->none_bitmap, pos) == 1) {
+
+            if (BITMAP_GET(node->none_bitmap, pos) == 1) { // None
                 BITMAP_CLEAR(node->none_bitmap, pos);
                 node->items[pos].comp.data.key = key;
                 node->items[pos].comp.data.value = value;
                 break;
-            } else if (BITMAP_GET(node->child_bitmap, pos) == 0) {
+            } else if (BITMAP_GET(node->child_bitmap, pos) == 0) { // Data
                 BITMAP_SET(node->child_bitmap, pos);
                 node->items[pos].comp.child = build_tree_two(key, value, node->items[pos].comp.data.key, node->items[pos].comp.data.value);
                 insert_to_data = 1;
                 break;
-            } else {
+            } else { // Node
                 node = node->items[pos].comp.child;
             }
         }
-        for (int i = 0; i < path_size; i ++) {
+
+        for (int i = 0; i < path_size; i++) {
             path[i]->num_insert_to_data += insert_to_data;
         }
 
-        for (int i = 0; i < path_size; i ++) {
-            Node* node = path[i];
+        for (int i = 0; i < path_size; i++) {
+            Node *node = path[i];
             const int num_inserts = node->num_inserts;
             const int num_insert_to_data = node->num_insert_to_data;
             const bool need_rebuild = node->fixed == 0 && node->size >= node->build_size * 2 && node->size >= 64 && num_insert_to_data * 10 >= num_inserts;
 
             if (need_rebuild) {
                 const int ESIZE = node->size;
-                T* keys = new T[ESIZE];
-                P* values = new P[ESIZE];
+                T *keys = new T[ESIZE];
+                P *values = new P[ESIZE];
 
                 #if COLLECT_TIME
                 auto start_time_scan = std::chrono::high_resolution_clock::now();
@@ -923,7 +1052,7 @@ private:
                 #if COLLECT_TIME
                 auto start_time_build = std::chrono::high_resolution_clock::now();
                 #endif
-                Node* new_node = build_tree_bulk(keys, values, ESIZE);
+                Node *new_node = build_tree_bulk(keys, values, ESIZE);
                 #if COLLECT_TIME
                 auto end_time_build = std::chrono::high_resolution_clock::now();
                 auto duration_build = end_time_build - start_time_build;
@@ -935,14 +1064,14 @@ private:
 
                 path[i] = new_node;
                 if (i > 0) {
-                    int pos = PREDICT_POS(path[i-1], key);
-                    path[i-1]->items[pos].comp.child = new_node;
+                    int pos = PREDICT_POS(path[i - 1], key);
+                    path[i - 1]->items[pos].comp.child = new_node;
                 }
 
                 break;
             }
         }
-        if(ok) {
+        if (ok) {
             *ok = true;
         }
         return path[0];
@@ -950,18 +1079,19 @@ private:
 
     // SATISFY_LOWER = true means all the keys in the subtree of `node` are no less than to `lower`.
     template<bool SATISFY_LOWER>
-    int range_core_len(std::pair <T, P> *results, int pos, Node *node, const T &lower, int len) {
+    int range_core_len(std::pair<T, P> *results, int pos, Node *node, const T &lower, int len) {
         if constexpr(SATISFY_LOWER)
         {
             int bit_pos = 0;
             const bitmap_t *none_bitmap = node->none_bitmap;
+
             while (bit_pos < node->num_items) {
                 bitmap_t not_none = ~(*none_bitmap);
                 while (not_none) {
                     int latest_pos = BITMAP_NEXT_1(not_none);
                     not_none ^= 1 << latest_pos;
-
                     int i = bit_pos + latest_pos;
+
                     if (BITMAP_GET(node->child_bitmap, i) == 0) {
                         results[pos] = {node->items[i].comp.data.key, node->items[i].comp.data.value};
                         // __builtin_prefetch((void*)&(node->items[i].comp.data.key) + 64);
@@ -996,15 +1126,17 @@ private:
             if (lower_pos + 1 >= node->num_items) {
                 return pos;
             }
+
             int bit_pos = (lower_pos + 1) / BITMAP_WIDTH * BITMAP_WIDTH;
             const bitmap_t *none_bitmap = node->none_bitmap + bit_pos / BITMAP_WIDTH;
+
             while (bit_pos < node->num_items) {
                 bitmap_t not_none = ~(*none_bitmap);
                 while (not_none) {
                     int latest_pos = BITMAP_NEXT_1(not_none);
                     not_none ^= 1 << latest_pos;
-
                     int i = bit_pos + latest_pos;
+
                     if (i <= lower_pos) continue;
                     if (BITMAP_GET(node->child_bitmap, i) == 0) {
                         results[pos] = {node->items[i].comp.data.key, node->items[i].comp.data.value};
