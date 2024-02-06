@@ -252,8 +252,29 @@ public:
     }
 
     // Find the minimum `len` keys which are no less than `lower`, returns the number of found keys.
-    int range_query_len(std::pair<T, P> *results, const T &lower, int len) {
-        return range_core_len<false>(results, 0, root, lower, len);
+    int range_query_len(std::pair<T, P> *results, const T &lower, int len, const std::string &dataset) {
+        std::stringstream filename;
+        filename << dataset << "_count" << ".csv";
+
+        std::string output_file = filename.str();
+        std::cout << "output_file = " << output_file << std::endl;
+
+        std::ofstream null_ofs('null.csv');
+        std::ofstream ofs(output_file, std::ios::app);
+        if (!ofs.is_open()) {
+            std::cout << "create new file!" << std::endl;
+            ofs << "height,count\n";
+        }
+
+        Node *node = this->find_node(lower);
+        int search_count = 0;
+        int height = 0;
+        int result = this->range_core_len<false>(results, 0, root, lower, len, &search_count);
+        this->print_distribution_recursive(node, null_ofs, height);
+
+        ofs << height << "," << search_count << std::endl;
+        std::cout << "search_count: " << search_count << std::endl;
+        return result;
     }
 
     void show() const {
@@ -487,14 +508,29 @@ private:
         bitmap_allocator.deallocate(p, n);
     }
 
+    Node *find_node(const T &key) {
+        Node *node = root;
+        
+        while (true) {
+            int pos = PREDICT_POS(node, key);
+            if (BITMAP_GET(node->child_bitmap, pos) == 1) {
+                node = node->items[pos].comp.child;
+            } else {
+                if (BITMAP_GET(node->none_bitmap, pos) == 1) {
+                    return nullptr;
+                }
+                return node;
+            }
+        }
+    }
+
     void print_distribution_recursive(Node *node, std::ofstream &ofs, int &max_subtree_depth) {
         int subtree_depth = 0;
+        Stat stat{node->num_items, 0, 0, 0, 0};
         
         if (node == nullptr) {
             return;
         }
-
-        Stat stat{node->num_items, 0, 0, 0, 0};
 
         for (int i = 0; i < node->num_items; i++) {
             if (BITMAP_GET(node->none_bitmap, i) == 1) {
@@ -510,7 +546,10 @@ private:
         }
 
         stat.height = max_subtree_depth + 1;
-        ofs << stat.total << "," << stat.null << "," << stat.data << "," << stat.node << "," << stat.height << std::endl;
+
+        if (!ofs.failed()) {
+            ofs << stat.total << "," << stat.null << "," << stat.data << "," << stat.node << "," << stat.height << std::endl;
+        }
     }
 
     void print_distribution(const std::string &dataset) {
@@ -1081,11 +1120,12 @@ private:
 
     // SATISFY_LOWER = true means all the keys in the subtree of `node` are no less than to `lower`.
     template<bool SATISFY_LOWER>
-    int range_core_len(std::pair<T, P> *results, int pos, Node *node, const T &lower, int len) {
+    int range_core_len(std::pair<T, P> *results, int pos, Node *node, const T &lower, int len, int *search_count) {
         if constexpr(SATISFY_LOWER)
         {
             int bit_pos = 0;
             const bitmap_t *none_bitmap = node->none_bitmap;
+            (*search_count)++;
 
             while (bit_pos < node->num_items) {
                 bitmap_t not_none = ~(*none_bitmap);
@@ -1099,7 +1139,7 @@ private:
                         // __builtin_prefetch((void*)&(node->items[i].comp.data.key) + 64);
                         pos++;
                     } else {
-                        pos = range_core_len<true>(results, pos, node->items[i].comp.child, lower, len);
+                        pos = range_core_len<true>(results, pos, node->items[i].comp.child, lower, len, search_count);
                     }
                     if (pos >= len) {
                         return pos;
@@ -1119,7 +1159,7 @@ private:
                         pos++;
                     }
                 } else {
-                    pos = range_core_len<false>(results, pos, node->items[lower_pos].comp.child, lower, len);
+                    pos = range_core_len<false>(results, pos, node->items[lower_pos].comp.child, lower, len, search_count);
                 }
                 if (pos >= len) {
                     return pos;
@@ -1145,7 +1185,7 @@ private:
                         // __builtin_prefetch((void*)&(node->items[i].comp.data.key) + 64);
                         pos++;
                     } else {
-                        pos = range_core_len<true>(results, pos, node->items[i].comp.child, lower, len);
+                        pos = range_core_len<true>(results, pos, node->items[i].comp.child, lower, len, search_count);
                     }
                     if (pos >= len) {
                         return pos;

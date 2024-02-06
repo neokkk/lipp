@@ -39,7 +39,6 @@ bool LIPPInterface<KEY_TYPE, PAYLOAD_TYPE>::get(KEY_TYPE key, PAYLOAD_TYPE &val,
 template<class KEY_TYPE, class PAYLOAD_TYPE>
 bool LIPPInterface<KEY_TYPE, PAYLOAD_TYPE>::put(KEY_TYPE key, PAYLOAD_TYPE value, Param *param) {
     return lipp.insert(key, value);
-
 }
 
 template<class KEY_TYPE, class PAYLOAD_TYPE>
@@ -55,10 +54,10 @@ bool LIPPInterface<KEY_TYPE, PAYLOAD_TYPE>::remove(KEY_TYPE key, Param *param) {
 template<class KEY_TYPE, class PAYLOAD_TYPE>
 size_t LIPPInterface<KEY_TYPE, PAYLOAD_TYPE>::scan(KEY_TYPE key_low_bound,
                                                    size_t key_num,
-                                                   std::pair <KEY_TYPE, PAYLOAD_TYPE> *result,
+                                                   std::pair<KEY_TYPE, PAYLOAD_TYPE> *result,
                                                    Param *param) {
     if (!result) {
         result = new std::pair<KEY_TYPE, PAYLOAD_TYPE>[key_num];
     }
-    return lipp.range_query_len(result, key_low_bound, key_num);
+    return lipp.range_query_len(result, key_low_bound, key_num, param->dataset);
 }
