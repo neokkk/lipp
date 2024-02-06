@@ -191,10 +191,13 @@ public:
         destroy_tree(root);
         root = build_tree_bulk(keys, values, num_keys);
 
-        this->print_distribution();
-
         delete[] keys;
         delete[] values;
+    }
+
+    void bulk_load(const V *vs, int num_keys, const std::string &dataset) {
+        this->bulk_load(vs, num_keys);
+        this->print_distribution(dataset);
     }
 
     bool remove(const T &key) {
@@ -510,10 +513,9 @@ private:
         ofs << stat.total << "," << stat.null << "," << stat.data << "," << stat.node << "," << stat.height << std::endl;
     }
 
-    void print_distribution() {
-        auto now = std::chrono::high_resolution_clock::now();
+    void print_distribution(const std::string &dataset) {
         std::stringstream filename;
-        filename << "distribution_" << now.time_since_epoch().count() % 1000000 << ".csv";
+        filename << dataset << ".csv";
 
         std::string output_file = filename.str();
         std::cout << "output_file = " << output_file << std::endl;

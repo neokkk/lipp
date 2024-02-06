@@ -26,7 +26,7 @@ private:
 
 template<class KEY_TYPE, class PAYLOAD_TYPE>
 void LIPPInterface<KEY_TYPE, PAYLOAD_TYPE>::bulk_load(std::pair<KEY_TYPE, PAYLOAD_TYPE> *key_value, size_t num, Param *param) {
-    lipp.bulk_load(key_value, static_cast<int>(num));
+    lipp.bulk_load(key_value, static_cast<int>(num), param->dataset);
 }
 
 template<class KEY_TYPE, class PAYLOAD_TYPE>
