@@ -1,4 +1,4 @@
-#include "./core/lipp.h"
+#include "./src/core/lipp.h"
 #include "../indexInterface.h"
 
 template<class KEY_TYPE, class PAYLOAD_TYPE>

@@ -259,9 +259,14 @@ public:
         std::string output_file = filename.str();
         std::cout << "output_file = " << output_file << std::endl;
 
-        std::ofstream null_ofs('null.csv');
+        std::ifstream ifs(filename.str());
+        bool is_file_exist = ifs.good();
+        ifs.close();
+
+        std::ofstream null_ofs("null.csv");
         std::ofstream ofs(output_file, std::ios::app);
-        if (!ofs.is_open()) {
+
+        if (!is_file_exist) {
             std::cout << "create new file!" << std::endl;
             ofs << "height,count\n";
         }
@@ -272,7 +277,7 @@ public:
         int result = this->range_core_len<false>(results, 0, root, lower, len, &search_count);
         this->print_distribution_recursive(node, null_ofs, height);
 
-        ofs << height << "," << search_count << std::endl;
+        ofs << height + 1 << "," << search_count << std::endl;
         std::cout << "search_count: " << search_count << std::endl;
         return result;
     }
@@ -547,7 +552,7 @@ private:
 
         stat.height = max_subtree_depth + 1;
 
-        if (!ofs.failed()) {
+        if (!ofs.fail()) {
             ofs << stat.total << "," << stat.null << "," << stat.data << "," << stat.node << "," << stat.height << std::endl;
         }
     }
