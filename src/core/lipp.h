@@ -268,16 +268,18 @@ public:
 
         if (!is_file_exist) {
             std::cout << "create new file!" << std::endl;
-            ofs << "height,count\n";
+            ofs << "depth,count\n";
         }
 
         Node *node = this->find_node(lower);
-        int search_count = 0;
-        int height = 0;
-        int result = this->range_core_len<false>(results, 0, root, lower, len, &search_count);
-        this->print_distribution_recursive(node, null_ofs, height);
 
-        ofs << height + 1 << "," << search_count << std::endl;
+        int search_count = 0;
+        int max_depth = 0;
+        int result = this->range_core_len<false>(results, 0, root, lower, len, &search_count);
+        this->print_distribution_recursive(node, null_ofs, 0, max_depth);
+
+        int depth = this->print_depth(node);
+        ofs << depth << "," << search_count << std::endl;
         std::cout << "search_count: " << search_count << std::endl;
         return result;
     }
@@ -317,21 +319,24 @@ public:
         }
     }
     
-    void print_depth() const {
-        int max_depth = 1, sum_depth = 0, sum_nodes = 0;
+    int print_depth(Node *to) const {
+        int max_depth = 1, sum_depth = 0, sum_nodes = 0, depth = 0;
         std::stack<Node *> s;
         std::stack<int> d;
 
         s.push(root);
         d.push(1);
 
-
         while (!s.empty()) {
             Node *node = s.top();
-            int depth = d.top();
+            depth = d.top();
 
             s.pop();
             d.pop();
+
+            if (node && node == to) {
+                return depth;
+            }
 
             for (int i = 0; i < node->num_items; i++) {
                 if (BITMAP_GET(node->child_bitmap, i) == 1) {
@@ -346,6 +351,7 @@ public:
         }
 
         printf("max_depth = %d, avg_depth = %.2lf\n", max_depth, double(sum_depth) / double(sum_nodes));
+        return max_depth;
     }
     
     void verify() const {
@@ -468,7 +474,7 @@ private:
         unsigned int null;
         unsigned int data;
         unsigned int node;
-        unsigned int height;
+        unsigned int depth;
     };
 
     Node *root;
@@ -529,13 +535,14 @@ private:
         }
     }
 
-    void print_distribution_recursive(Node *node, std::ofstream &ofs, int &max_subtree_depth) {
-        int subtree_depth = 0;
-        Stat stat{node->num_items, 0, 0, 0, 0};
-        
+    void print_distribution_recursive(Node *node, std::ofstream &ofs, int current_depth, int &max_depth) {
         if (node == nullptr) {
             return;
         }
+
+        Stat stat{node->num_items, 0, 0, 0, current_depth};
+        
+        max_depth = std::max(current_depth, max_depth);
 
         for (int i = 0; i < node->num_items; i++) {
             if (BITMAP_GET(node->none_bitmap, i) == 1) {
@@ -545,15 +552,12 @@ private:
                 stat.data++;
             } else {
                 stat.node++;
-                print_distribution_recursive(node->items[i].comp.child, ofs, subtree_depth);
-                max_subtree_depth = std::max(max_subtree_depth, subtree_depth + 1);
+                print_distribution_recursive(node->items[i].comp.child, ofs, current_depth + 1, max_depth);
             }
         }
 
-        stat.height = max_subtree_depth + 1;
-
         if (!ofs.fail()) {
-            ofs << stat.total << "," << stat.null << "," << stat.data << "," << stat.node << "," << stat.height << std::endl;
+            ofs << stat.total << "," << stat.null << "," << stat.data << "," << stat.node << "," << stat.depth << std::endl;
         }
     }
 
@@ -565,11 +569,11 @@ private:
         std::cout << "output_file = " << output_file << std::endl;
 
         std::ofstream ofs(output_file);
-        ofs << "total,null,data,node,height\n";
+        ofs << "total,null,data,node,depth\n";
 
-        int max_subtree_depth = 0;
+        int max_depth = 0;
 
-        print_distribution_recursive(this->root, ofs, max_subtree_depth);
+        print_distribution_recursive(this->root, ofs, 0, max_depth);
 
         std::cout << std::endl;
         ofs.close();
