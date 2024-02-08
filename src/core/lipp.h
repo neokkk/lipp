@@ -253,6 +253,10 @@ public:
 
     // Find the minimum `len` keys which are no less than `lower`, returns the number of found keys.
     int range_query_len(std::pair<T, P> *results, const T &lower, int len, const std::string &dataset) {
+        if (dataset == "") {
+            return 0;
+        }
+
         std::stringstream filename;
         filename << dataset << "_count" << ".csv";
 
@@ -268,19 +272,28 @@ public:
 
         if (!is_file_exist) {
             std::cout << "create new file!" << std::endl;
-            ofs << "depth,count\n";
+            ofs << "depth,up,down" << std::endl;
         }
 
         Node *node = this->find_node(lower);
 
-        int search_count = 0;
         int max_depth = 0;
-        int result = this->range_core_len<false>(results, 0, root, lower, len, &search_count);
+        int result = this->range_core_len<false>(results, 0, root, lower, len);
         this->print_distribution_recursive(node, null_ofs, 0, max_depth);
 
-        int depth = this->print_depth(node);
-        ofs << depth << "," << search_count << std::endl;
-        std::cout << "search_count: " << search_count << std::endl;
+        for (auto &pair : this->count_map) {
+            int up = pair.second.up;
+            int down = pair.second.down;
+
+            if (up > 0 && down > 0) {
+                int depth = this->print_depth(pair.first);
+                ofs << depth << "," << up << "," << down << std::endl;
+            }
+        }
+
+        ofs << "--------------------------" << std::endl;
+        this->count_map.clear();
+
         return result;
     }
 
@@ -288,7 +301,7 @@ public:
         std::stack<Node *> s;
         s.push(root);
 
-        printf("============= SHOW LIPP ================\n");
+        printf("============= SHOW LIPP =============\n");
 
         while (!s.empty()) {
             Node *node = s.top();
@@ -325,7 +338,7 @@ public:
         std::stack<int> d;
 
         s.push(root);
-        d.push(1);
+        d.push(0);
 
         while (!s.empty()) {
             Node *node = s.top();
@@ -477,11 +490,17 @@ private:
         unsigned int depth;
     };
 
+    struct Count {
+        unsigned int up = 0;
+        unsigned int down = 0;
+    };
+
     Node *root;
     std::stack<Node *> pending_two;
     std::allocator<Node> node_allocator;
     std::allocator<Item> item_allocator;
     std::allocator<bitmap_t> bitmap_allocator;
+    std::unordered_map<Node *, Count> count_map;
 
     Node *new_nodes(int n)
     {
@@ -1129,12 +1148,13 @@ private:
 
     // SATISFY_LOWER = true means all the keys in the subtree of `node` are no less than to `lower`.
     template<bool SATISFY_LOWER>
-    int range_core_len(std::pair<T, P> *results, int pos, Node *node, const T &lower, int len, int *search_count) {
+    int range_core_len(std::pair<T, P> *results, int pos, Node *node, const T &lower, int len) {
+        this->count_map.insert({node, Count()});
+
         if constexpr(SATISFY_LOWER)
         {
             int bit_pos = 0;
             const bitmap_t *none_bitmap = node->none_bitmap;
-            (*search_count)++;
 
             while (bit_pos < node->num_items) {
                 bitmap_t not_none = ~(*none_bitmap);
@@ -1148,7 +1168,9 @@ private:
                         // __builtin_prefetch((void*)&(node->items[i].comp.data.key) + 64);
                         pos++;
                     } else {
-                        pos = range_core_len<true>(results, pos, node->items[i].comp.child, lower, len, search_count);
+                        this->count_map[node].down++;
+                        pos = range_core_len<true>(results, pos, node->items[i].comp.child, lower, len);
+                        this->count_map[node].up++;
                     }
                     if (pos >= len) {
                         return pos;
@@ -1158,6 +1180,7 @@ private:
                 bit_pos += BITMAP_WIDTH;
                 none_bitmap++;
             }
+
             return pos;
         } else {
             int lower_pos = PREDICT_POS(node, lower);
@@ -1168,7 +1191,8 @@ private:
                         pos++;
                     }
                 } else {
-                    pos = range_core_len<false>(results, pos, node->items[lower_pos].comp.child, lower, len, search_count);
+                    pos = range_core_len<false>(results, pos, node->items[lower_pos].comp.child, lower, len);
+
                 }
                 if (pos >= len) {
                     return pos;
@@ -1194,7 +1218,9 @@ private:
                         // __builtin_prefetch((void*)&(node->items[i].comp.data.key) + 64);
                         pos++;
                     } else {
-                        pos = range_core_len<true>(results, pos, node->items[i].comp.child, lower, len, search_count);
+                        this->count_map[node].down++;
+                        pos = range_core_len<true>(results, pos, node->items[i].comp.child, lower, len);
+                        this->count_map[node].up++;
                     }
                     if (pos >= len) {
                         return pos;
